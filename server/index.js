@@ -3,6 +3,8 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 
+
+
 dotenv.config();
 
 const app = express();
@@ -12,6 +14,13 @@ const MONGODB_URI = process.env.MONGODB_URI;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Routes
+const questionRoutes = require("./routes/questionRoutes");
+const attemptRoutes = require("./routes/attemptRoutes");
+app.use("/api/questions", questionRoutes);
+app.use("/api/attempts", attemptRoutes);
+
 
 // Health check route
 app.get("/api/health", (req, res) => {
