@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 type DifficultyLevel = "beginner" | "intermediate" | "advanced";
 type QuizQuestion = {
@@ -8,6 +8,7 @@ type QuizQuestion = {
   options: string[];
   correctIndex: number;
   explanation: string;
+  distractorExplanations?: string[];
 };
 type QuizData = {
   topic: string;
@@ -27,9 +28,36 @@ export default function Home() {
   const [score, setScore] = useState(0);
   const [results, setResults] = useState<{ subtopic: string; correct: boolean }[]>([]);
   const [coveredSubtopics, setCoveredSubtopics] = useState<Set<string>>(new Set());
+  const [subtopicStats, setSubtopicStats] = useState<Map<string, { attempts: number; correct: number }>>(new Map());
+  const [missedSubtopics, setMissedSubtopics] = useState<Set<string>>(new Set());
   const [remainingSubtopics, setRemainingSubtopics] = useState<string[]>([]);
+  // Preserve the full canonical subtopic list from the FIRST generation for this topic+level.
+  const [fullSubtopics, setFullSubtopics] = useState<string[]>([]);
+  // Track the latest outcome per subtopic across retries
+  const [lastOutcome, setLastOutcome] = useState<Map<string, boolean>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Helpers to ensure robust series-wise ordering even if AI returns minor name variations
+  function normalizeSubtopicName(s: string) {
+    return (s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .replace(/\s+/g, " ");
+  }
+  function indexForSubtopic(name: string, canonical: string[]) {
+    const n = normalizeSubtopicName(name);
+    // exact normalized match
+    let idx = canonical.findIndex(c => normalizeSubtopicName(c) === n);
+    if (idx >= 0) return idx;
+    // contains (either way) to catch small suffix/prefix variations
+    idx = canonical.findIndex(c => n.includes(normalizeSubtopicName(c)));
+    if (idx >= 0) return idx;
+    idx = canonical.findIndex(c => normalizeSubtopicName(c).includes(n));
+    if (idx >= 0) return idx;
+    return Number.MAX_SAFE_INTEGER; // unknown -> push to end
+  }
 
   const hasStarted = quiz !== null;
   const questions = quiz?.questions ?? [];
@@ -45,7 +73,15 @@ export default function Home() {
       const res = await fetch("/api/quiz/generate", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ topic: topic.trim(), difficultyLevel, numQuestions }) });
       if (!res.ok) { const data = await res.json().catch(()=>({})); throw new Error(data.error || "Failed to generate quiz."); }
       const data: QuizData = await res.json();
+      // Sort questions series-wise according to provided allSubtopics (normalized)
+      if (data.allSubtopics && data.allSubtopics.length) {
+        const canon = data.allSubtopics;
+        data.questions = [...data.questions].sort((a,b)=> indexForSubtopic(a.subtopic, canon) - indexForSubtopic(b.subtopic, canon));
+      }
       setQuiz(data); setRemainingSubtopics(data.allSubtopics || []);
+      if (data.allSubtopics && data.allSubtopics.length > 0) {
+        setFullSubtopics(data.allSubtopics); // initial canonical list
+      }
     } catch (err:any) { setError(err.message || "Unknown error"); } finally { setLoading(false); }
   }
 
@@ -53,7 +89,22 @@ export default function Home() {
     if (!currentQuestion || selectedIndex !== null) return;
     setSelectedIndex(idx); const correct = idx === currentQuestion.correctIndex; setIsCorrect(correct); if (correct) setScore(s=>s+1);
     setResults(r => [...r, { subtopic: currentQuestion.subtopic, correct }]);
+    setLastOutcome(prev => { const next = new Map(prev); next.set(currentQuestion.subtopic, correct); return next; });
     setCoveredSubtopics(prev => { const next = new Set(prev); if (currentQuestion.subtopic) next.add(currentQuestion.subtopic); if (quiz?.allSubtopics) setRemainingSubtopics(quiz.allSubtopics.filter(s=>!next.has(s))); return next; });
+    setSubtopicStats(prev => {
+      const next = new Map(prev);
+      const stats = next.get(currentQuestion.subtopic) || { attempts: 0, correct: 0 };
+      stats.attempts += 1;
+      if (correct) {
+        stats.correct += 1;
+        // If previously missed and now correct, remove from missed set.
+        setMissedSubtopics(m => { const n = new Set(m); n.delete(currentQuestion.subtopic); return n; });
+      } else {
+        setMissedSubtopics(m => new Set(m).add(currentQuestion.subtopic));
+      }
+      next.set(currentQuestion.subtopic, stats);
+      return next;
+    });
   }
 
   function nextQuestion() {
@@ -63,17 +114,23 @@ export default function Home() {
   async function continueRemaining() {
     if (!quiz || remainingSubtopics.length === 0) return; setLoading(true); setError(null);
     try {
-      const res = await fetch("/api/quiz/generate", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ topic: quiz.topic, difficultyLevel: quiz.difficultyLevel, numQuestions, remainingSubtopics }) });
+      const res = await fetch("/api/quiz/generate", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ topic: quiz.topic, difficultyLevel: quiz.difficultyLevel, numQuestions: Math.min(numQuestions, remainingSubtopics.length), focusSubtopics: remainingSubtopics, existingSubtopics: fullSubtopics }) });
       if (!res.ok) { const data = await res.json().catch(()=>({})); throw new Error(data.error || "Failed to load remaining subtopics."); }
-      const data: QuizData = await res.json(); setQuiz(data); setCurrentIndex(0); setSelectedIndex(null); setIsCorrect(null);
+      const data: QuizData = await res.json();
+      const canonical = fullSubtopics.length ? fullSubtopics : (data.allSubtopics||[]);
+      if (canonical.length) {
+        data.questions = [...data.questions].sort((a,b)=> indexForSubtopic(a.subtopic, canonical) - indexForSubtopic(b.subtopic, canonical));
+      }
+      setQuiz({ ...data, allSubtopics: canonical });
+      setCurrentIndex(0); setSelectedIndex(null); setIsCorrect(null);
     } catch (err:any) { setError(err.message || "Unknown error"); } finally { setLoading(false); }
   }
 
-  function restart() { setQuiz(null); setCurrentIndex(0); setSelectedIndex(null); setIsCorrect(null); setScore(0); setError(null); setCoveredSubtopics(new Set()); setRemainingSubtopics([]); setResults([]); }
+  function restart() { setQuiz(null); setCurrentIndex(0); setSelectedIndex(null); setIsCorrect(null); setScore(0); setError(null); setCoveredSubtopics(new Set()); setRemainingSubtopics([]); setResults([]); setSubtopicStats(new Map()); setMissedSubtopics(new Set()); setFullSubtopics([]); setLastOutcome(new Map()); }
 
   function finalizeQuiz() {
     if (!quiz) return;
-    const coverageTotal = quiz.allSubtopics?.length || 0;
+    const coverageTotal = fullSubtopics.length || quiz.allSubtopics?.length || 0;
     const coverageDone = coveredSubtopics.size;
     const coveragePercent = coverageTotal > 0 ? Math.round((coverageDone / coverageTotal) * 100) : 0;
     const session = {
@@ -87,7 +144,8 @@ export default function Home() {
       coverageDone,
       coverageTotal,
       results,
-      subtopics: quiz.allSubtopics || [],
+      subtopics: fullSubtopics.length ? fullSubtopics : (quiz.allSubtopics || []),
+      subtopicStats: Array.from(subtopicStats.entries()).map(([subtopic, stats]) => ({ subtopic, attempts: stats.attempts, correct: stats.correct }))
     };
     try {
       const existing = JSON.parse(localStorage.getItem("quizHistory") || "[]");
@@ -97,6 +155,49 @@ export default function Home() {
     } catch {}
     window.location.href = "/stats";
   }
+
+  async function retryMissed() {
+    if (!quiz) return;
+    const targets = Array.from(missedSubtopics.values());
+    if (targets.length === 0) return;
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch('/api/quiz/generate', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ topic: quiz.topic, difficultyLevel: quiz.difficultyLevel, numQuestions: Math.min(numQuestions, targets.length), focusSubtopics: targets, existingSubtopics: fullSubtopics }) });
+      if (!res.ok) { const d = await res.json().catch(()=>({})); throw new Error(d.error || 'Failed to generate retry quiz'); }
+      const data: QuizData = await res.json();
+      const canonical = fullSubtopics.length ? fullSubtopics : (data.allSubtopics||[]);
+      if (canonical.length) {
+        data.questions = [...data.questions].sort((a,b)=> indexForSubtopic(a.subtopic, canonical) - indexForSubtopic(b.subtopic, canonical));
+      }
+      // Preserve existing fullSubtopics; do NOT reset coverage or mastery, only load new questions set.
+      setQuiz({ ...data, allSubtopics: canonical });
+      setCurrentIndex(0); setSelectedIndex(null); setIsCorrect(null); setScore(0); setResults([]); // new attempt results
+      // remainingSubtopics now recomputed from full list minus covered.
+      setRemainingSubtopics((fullSubtopics.length ? fullSubtopics : data.allSubtopics || []).filter(s => !coveredSubtopics.has(s)));
+    } catch (e:any) { setError(e.message || 'Unknown error'); } finally { setLoading(false); }
+  }
+
+  // Keyboard shortcuts listener
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (!hasStarted) {
+        if (e.key === 'Enter' && !loading) { startQuiz({ preventDefault(){} } as any); }
+        return;
+      }
+      if (hasStarted && currentQuestion) {
+        if (selectedIndex === null) {
+          const num = parseInt(e.key, 10);
+          if (!isNaN(num) && num >=1 && num <= currentQuestion.options.length) { selectOption(num-1); return; }
+        }
+        if (e.key.toLowerCase() === 'n' && selectedIndex !== null) { nextQuestion(); return; }
+        if (e.key.toLowerCase() === 'r') { restart(); return; }
+        if (e.key.toLowerCase() === 's' && quizFinished) { finalizeQuiz(); return; }
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [hasStarted, currentQuestion, selectedIndex, quizFinished, loading, quiz, topic, difficultyLevel, numQuestions]);
 
   return (
     <div className="min-h-screen flex flex-col gap-8 py-8 px-6">
@@ -119,30 +220,38 @@ export default function Home() {
             {!quiz && (
               <p className="text-xs text-zinc-400">Start a quiz to see dynamically generated subtopics here.</p>
             )}
-            {quiz?.allSubtopics && (
+            {(fullSubtopics.length > 0) && (
               <ul className="space-y-1 text-xs">
-                {quiz.allSubtopics.map(s => {
+                {(fullSubtopics).map(s => {
                   const done = coveredSubtopics.has(s);
                   const isCurrent = currentQuestion?.subtopic === s;
+                  const stats = subtopicStats.get(s);
+                  const mastery = stats ? Math.round((stats.correct / stats.attempts) * 100) : null;
+                  const last = lastOutcome.get(s);
+                  const colorClass = (last === true) ? "text-emerald-400" : (last === false) ? "text-rose-400" : (done ? "text-emerald-400" : (isCurrent ? "text-zinc-200" : "text-zinc-500"));
                   return (
                     <li
                       key={s}
                       className={[
                         "flex items-center gap-2 px-2 py-1 rounded transition-colors",
-                        done ? "text-emerald-400" : isCurrent ? "text-zinc-200 bg-zinc-800/40 ring-1 ring-emerald-500/30" : "text-zinc-500",
+                        colorClass,
+                        isCurrent ? "bg-zinc-800/40 ring-1 ring-emerald-500/30" : "",
                       ].join(" ")}
                     >
                       <span className="text-[10px] w-3 text-center">
-                        {done ? "✓" : isCurrent ? "↳" : "•"}
+                        {last === true ? "✓" : last === false ? "✗" : (done ? "✓" : isCurrent ? "↳" : "•")}
                       </span>
-                      <span className="truncate">{s}</span>
+                      <span className="truncate flex-1">{s}</span>
+                      {mastery !== null && (
+                        <span className={"text-[10px] px-1 rounded border " + (mastery===100?"border-emerald-500 text-emerald-400":"border-zinc-700 text-zinc-400")}>{mastery}%</span>
+                      )}
                     </li>
                   );
                 })}
               </ul>
             )}
-            {quiz?.allSubtopics && (
-              <p className="mt-3 text-[10px] text-zinc-500">{coveredSubtopics.size}/{quiz.allSubtopics.length} covered • {Math.round((coveredSubtopics.size / quiz.allSubtopics.length)*100)}%</p>
+            {(fullSubtopics.length>0) && (
+              <p className="mt-3 text-[10px] text-zinc-500">{coveredSubtopics.size}/{fullSubtopics.length} covered • {Math.round((coveredSubtopics.size / fullSubtopics.length)*100)}%</p>
             )}
           </div>
         </aside>
@@ -221,6 +330,17 @@ export default function Home() {
                 <div className="mt-4 space-y-2">
                   <p className={`text-sm ${isCorrect ? "text-emerald-400" : "text-rose-400"}`}>{isCorrect ? "Correct! ✅" : "Incorrect. ❌"}</p>
                   <p className="text-xs text-zinc-300">{currentQuestion.explanation}</p>
+                  {currentQuestion.distractorExplanations && (
+                    <div className="mt-2 space-y-1">
+                      {currentQuestion.options.map((opt, i) => {
+                        const expl = currentQuestion.distractorExplanations![i];
+                        const isCorr = i === currentQuestion.correctIndex;
+                        return (
+                          <div key={i} className={"text-[11px] rounded-md px-2 py-1 border " + (isCorr?"border-emerald-600/60 bg-emerald-600/5":"border-zinc-700 bg-zinc-800/40")}> <span className="font-medium mr-1">{String.fromCharCode(65+i)}.</span>{expl}</div>
+                        );
+                      })}
+                    </div>
+                  )}
                   <button onClick={currentIndex < questions.length -1 ? nextQuestion : finalizeQuiz} className="mt-2 rounded-full border border-zinc-700 px-4 py-1.5 text-xs font-medium text-zinc-100 hover:bg-zinc-900 cursor-pointer">{currentIndex < questions.length -1 ? "Next question" : "Finish & Stats"}</button>
                 </div>
               )}
@@ -229,12 +349,13 @@ export default function Home() {
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-5 text-sm text-zinc-200 space-y-3">
                 <p className="font-medium">Quiz finished! 🎉</p>
                 <p>You scored {score} / {questions.length} ({Math.round((score / questions.length)*100)}%).</p>
-                {quiz?.allSubtopics && (
-                  <p className="text-xs text-zinc-400">Coverage: {coveredSubtopics.size} / {quiz.allSubtopics.length} ({Math.round((coveredSubtopics.size / quiz.allSubtopics.length)*100)}%).</p>
+                {(fullSubtopics.length>0) && (
+                  <p className="text-xs text-zinc-400">Coverage: {coveredSubtopics.size} / {fullSubtopics.length} ({Math.round((coveredSubtopics.size / fullSubtopics.length)*100)}%).</p>
                 )}
                 <div className="flex flex-wrap gap-2">
                   <button onClick={finalizeQuiz} className="rounded-full bg-emerald-500 px-5 py-2 text-xs font-medium text-black hover:bg-emerald-400 cursor-pointer">View Stats</button>
                   {remainingSubtopics.length > 0 && <button onClick={continueRemaining} disabled={loading} className="rounded-full border border-zinc-700 px-5 py-2 text-xs font-medium text-zinc-100 hover:bg-zinc-900 disabled:opacity-50 cursor-pointer">{loading?"Loading...":"More subtopics"}</button>}
+                  {missedSubtopics.size > 0 && <button onClick={retryMissed} disabled={loading} className="rounded-full border border-rose-600 px-5 py-2 text-xs font-medium text-rose-300 hover:bg-rose-600/10 disabled:opacity-50 cursor-pointer">{loading?"...":"Retry Missed"}</button>}
                   <button onClick={restart} className="rounded-full border border-zinc-700 px-5 py-2 text-xs font-medium text-zinc-100 hover:bg-zinc-900 cursor-pointer">Restart</button>
                 </div>
               </div>

@@ -7,6 +7,7 @@ type QuizQuestion = {
   options: string[];
   correctIndex: number;
   explanation: string;
+  distractorExplanations?: string[]; // same length as options; explanation for each option (correct one can state why correct)
 };
 
 type QuizResponse = {
@@ -85,7 +86,8 @@ You must return STRICT JSON ONLY with this exact TypeScript-like shape (no markd
       "question": string,
       "options": [string, string, string, string],
       "correctIndex": 0 | 1 | 2 | 3,
-      "explanation": string
+      "explanation": string,
+      "distractorExplanations": [string, string, string, string]
     }, ...
   ]
 }
@@ -96,7 +98,10 @@ Rules:
 - "questions" length MUST be exactly numQuestions.
 - Each question MUST have exactly 4 options with exactly ONE correct option.
 - correctIndex is the 0-based index of the correct option.
-- Explanations: 2–4 concise sentences, beginner-friendly tone.
+- "explanation": 2–4 concise sentences summarizing reasoning for the correct answer.
+- "distractorExplanations": array with SAME length as options. Each entry explains briefly (1 sentence) why that option is incorrect OR (for the correct option) why it is correct.
+  // Order questions series-wise following the subtopic order (canonical list or the provided focus subset). Do not jump around.
+  // When a focus subset of subtopics is provided, EVERY question MUST use only that subset, and follow that subset's series order. Include each focus subtopic at least once before repeating any.
 - Mix conceptual, practical, and occasional code/output or spot-the-error style questions.
 - Use simple English.
 - ABSOLUTELY NO text outside the JSON. NO backticks.
@@ -105,12 +110,27 @@ Rules:
     const remainingSubtopics = (body as any)?.remainingSubtopics as
       | string[]
       | undefined;
+    // New optional focused retry support
+    const focusSubtopics = (body as any)?.focusSubtopics as string[] | undefined;
+    const existingSubtopics = (body as any)?.existingSubtopics as string[] | undefined;
 
-    const userPrompt = `Generate a multiple-choice quiz.
+    let userPrompt: string;
+    if (existingSubtopics && existingSubtopics.length) {
+      // Retry mode preserving canonical list
+      userPrompt = `Generate a multiple-choice quiz retry.
+Topic: "${topic}"
+Difficulty level: "${difficultyLevel}"
+Canonical subtopic list (MUST return exactly this order in allSubtopics): ${existingSubtopics.join(", ")}
+${focusSubtopics && focusSubtopics.length ? `Generate ALL questions ONLY from this subset: ${focusSubtopics.join(", ")}. Do NOT introduce other subtopics.` : "Spread questions across the canonical list."}
+Number of questions: ${numQuestions}
+If any provided focus subtopic appears malformed, still keep original list unchanged.
+Return ONLY the JSON described by system instructions.`;
+    } else {
+      userPrompt = `Generate a multiple-choice quiz.
 Topic: "${topic}"
 Difficulty level: "${difficultyLevel}"
 Number of questions: ${numQuestions}
-${remainingSubtopics && remainingSubtopics.length > 0 ? `Limit subtopics strictly to this subset: ${remainingSubtopics.join(", ")}.` : "If the topic is broad, first determine a good spread of subtopics."}
+${focusSubtopics && focusSubtopics.length > 0 ? `Limit subtopics strictly to this subset: ${focusSubtopics.join(", ")}.` : (remainingSubtopics && remainingSubtopics.length > 0 ? `Limit subtopics strictly to this subset: ${remainingSubtopics.join(", ")}.` : "If the topic is broad, first determine a good spread of subtopics.")}
 
 Guidance for difficultyLevel:
 - beginner: Start from fundamentals; progressively introduce slightly harder concepts.
@@ -118,6 +138,7 @@ Guidance for difficultyLevel:
 - advanced: Deep, tricky, edge cases, architecture/performance nuances.
 
 Return ONLY the JSON described by system instructions.`;
+    }
 
     // Debug: show which model & that key is present (never log the key itself)
     const triedModels: string[] = [];
@@ -230,16 +251,43 @@ Return ONLY the JSON described by system instructions.`;
       );
     }
 
+    // Enforce existingSubtopics canonical list if provided
+    if (existingSubtopics && existingSubtopics.length) {
+      (parsed as any).allSubtopics = existingSubtopics;
+      // Filter questions to only focusSubtopics if provided
+      if (focusSubtopics && focusSubtopics.length) {
+        parsed.questions = parsed.questions.filter(q => focusSubtopics.includes((q as any).subtopic));
+      }
+    }
+
     // Optionally trim to numQuestions if overshoot
     parsed.questions = parsed.questions.slice(0, numQuestions);
     // Basic sanitization: ensure subtopic present
     parsed.questions = parsed.questions.map((q: any) => ({
-      subtopic: q.subtopic || "unknown",
+      subtopic: typeof q.subtopic === 'string' ? q.subtopic.trim() : "unknown",
       question: q.question,
-      options: q.options,
-      correctIndex: q.correctIndex,
-      explanation: q.explanation,
+      options: Array.isArray(q.options) ? q.options.slice(0,4) : [],
+      correctIndex: typeof q.correctIndex === 'number' ? q.correctIndex : 0,
+      explanation: q.explanation || "",
+      distractorExplanations: Array.isArray(q.distractorExplanations) && q.distractorExplanations.length === 4 ? q.distractorExplanations : undefined,
     }));
+
+    // Series-wise ordering of questions by canonical subtopic order
+    const canonical = (existingSubtopics && existingSubtopics.length)
+      ? existingSubtopics
+      : ((parsed as any).allSubtopics as string[]);
+
+    const orderForThisQuiz = (focusSubtopics && focusSubtopics.length)
+      ? canonical.filter(s => new Set(focusSubtopics).has(s))
+      : canonical;
+
+    const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+    const indexMap = new Map<string, number>(orderForThisQuiz.map((s, i) => [norm(s), i]));
+    parsed.questions = parsed.questions.sort((a: any, b: any) => {
+      const ia = indexMap.get(norm(a.subtopic)) ?? Number.MAX_SAFE_INTEGER;
+      const ib = indexMap.get(norm(b.subtopic)) ?? Number.MAX_SAFE_INTEGER;
+      return ia - ib;
+    });
 
     return NextResponse.json(parsed);
   } catch (err: any) {
