@@ -11,6 +11,10 @@ const attemptSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    subtopic: {
+      type: String,
+      default: null, // optional; recorded to compute subtopic coverage
+    },
     wasCorrect: {
       type: Boolean,
       required: true,

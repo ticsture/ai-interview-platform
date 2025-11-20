@@ -5,10 +5,10 @@ const Question = require("../models/Question");
 const router = express.Router();
 
 // POST /api/attempts
-// Body: { questionId, wasCorrect, timeTakenSeconds }
+// Body: { questionId, wasCorrect, timeTakenSeconds, subtopic? }
 router.post("/", async (req, res) => {
   try {
-    const { questionId, wasCorrect, timeTakenSeconds } = req.body;
+    const { questionId, wasCorrect, timeTakenSeconds, subtopic } = req.body;
 
     if (!questionId || typeof wasCorrect !== "boolean") {
       return res.status(400).json({
@@ -25,6 +25,7 @@ router.post("/", async (req, res) => {
     const attempt = new Attempt({
       questionId,
       topic: question.topic,
+      subtopic: subtopic || question.subtopic || null,
       wasCorrect,
       timeTakenSeconds,
     });
@@ -62,17 +63,19 @@ router.get("/", async (req, res) => {
 // Returns stats per topic: total, correct, avg time
 router.get("/stats", async (req, res) => {
   try {
-    const pipeline = [
+    const { topic, includeSubtopics } = req.query;
+
+    const matchStage = topic ? { topic } : {};
+
+    const basePipeline = [
+      { $match: matchStage },
       {
         $group: {
           _id: "$topic",
           totalAttempts: { $sum: 1 },
-          correctAttempts: {
-            $sum: {
-              $cond: ["$wasCorrect", 1, 0],
-            },
-          },
+          correctAttempts: { $sum: { $cond: ["$wasCorrect", 1, 0] } },
           avgTimeSeconds: { $avg: "$timeTakenSeconds" },
+          distinctSubtopics: { $addToSet: "$subtopic" },
         },
       },
       {
@@ -82,14 +85,50 @@ router.get("/stats", async (req, res) => {
           totalAttempts: 1,
           correctAttempts: 1,
           avgTimeSeconds: 1,
+          coveredSubtopics: {
+            $filter: {
+              input: "$distinctSubtopics",
+              as: "s",
+              cond: { $ne: ["$$s", null] },
+            },
+          },
         },
       },
-      {
-        $sort: { topic: 1 },
-      },
+      { $sort: { topic: 1 } },
     ];
 
-    const stats = await Attempt.aggregate(pipeline);
+    const stats = await Attempt.aggregate(basePipeline);
+
+    if (includeSubtopics === "true" && topic) {
+      // Per-subtopic breakdown for provided topic
+      const subtopicPipeline = [
+        { $match: matchStage },
+        {
+          $group: {
+            _id: {
+              topic: "$topic",
+              subtopic: "$subtopic",
+            },
+            totalAttempts: { $sum: 1 },
+            correctAttempts: { $sum: { $cond: ["$wasCorrect", 1, 0] } },
+            avgTimeSeconds: { $avg: "$timeTakenSeconds" },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            topic: "$_id.topic",
+            subtopic: "$_id.subtopic",
+            totalAttempts: 1,
+            correctAttempts: 1,
+            avgTimeSeconds: 1,
+          },
+        },
+        { $sort: { subtopic: 1 } },
+      ];
+      const subtopicStats = await Attempt.aggregate(subtopicPipeline);
+      return res.json({ topics: stats, subtopics: subtopicStats });
+    }
 
     res.json(stats);
   } catch (err) {

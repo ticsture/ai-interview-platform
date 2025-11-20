@@ -6,6 +6,10 @@ const questionSchema = new mongoose.Schema(
       type: String,
       required: true,    // e.g. "DSA", "WebDev", "Java"
     },
+    subtopic: {
+      type: String, // e.g. "if statements", "loops", optional for legacy questions
+      default: null,
+    },
     questionText: {
       type: String,
       required: true,

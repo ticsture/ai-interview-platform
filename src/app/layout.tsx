@@ -31,20 +31,8 @@ export default function RootLayout({
               </Link>
               <div className="flex items-center gap-4 text-sm text-zinc-300">
                 <Link
-                  href="/questions"
-                  className="hover:text-zinc-50 transition-colors"
-                >
-                  Questions
-                </Link>
-                <Link
-                  href="/practice"
-                  className="hover:text-zinc-50 transition-colors"
-                >
-                  Practice
-                </Link>
-                <Link
                   href="/stats"
-                  className="hover:text-zinc-50 transition-colors"
+                  className="hover:text-zinc-50 transition-colors cursor-pointer"
                 >
                   Stats
                 </Link>
