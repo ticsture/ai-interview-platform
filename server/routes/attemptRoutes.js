@@ -1,11 +1,12 @@
 const express = require("express");
-const Attempt = require("../models/Attempt");
-const Question = require("../models/Question");
+const Attempt = require("../models/Attempt"); // stores each answer outcome
+const Question = require("../models/Question"); // referenced to derive topic/subtopic
 
 const router = express.Router();
 
 // POST /api/attempts
-// Body: { questionId, wasCorrect, timeTakenSeconds, subtopic? }
+// Body: { questionId, wasCorrect, timeTakenSeconds?, subtopic? }
+// Persists a single answer attempt for analytics; currently not invoked by quiz UI.
 router.post("/", async (req, res) => {
   try {
     const { questionId, wasCorrect, timeTakenSeconds, subtopic } = req.body;
@@ -38,8 +39,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET /api/attempts
-// Optional query params: ?topic=DSA
+// GET /api/attempts (list attempts) with optional ?topic filter
 router.get("/", async (req, res) => {
   try {
     const { topic } = req.query;
@@ -60,7 +60,7 @@ router.get("/", async (req, res) => {
   }
 });
 // GET /api/attempts/stats
-// Returns stats per topic: total, correct, avg time
+// Aggregated metrics per topic (+ optional per-subtopic breakdown when includeSubtopics=true)
 router.get("/stats", async (req, res) => {
   try {
     const { topic, includeSubtopics } = req.query;

@@ -1,7 +1,18 @@
 "use client";
 
+/**
+ * PracticeClient: Loads questions by topic from the Express API and lets the user
+ * self-mark correctness while tracking time spent per question.
+ * State summary:
+ * - selectedTopic: active topic filter for loading questions
+ * - questions/currentIndex: shuffled question set + pointer
+ * - loading/error: network and error states
+ * - seconds: timer per current question (reset on index change)
+ * - infoMessage: transient status (save success, end of set, etc.)
+ */
 import { useEffect, useState } from "react";
 
+// Question shape returned by backend (Mongo documents serialized to JSON)
 type Question = {
   _id: string;
   topic: string;
@@ -11,10 +22,12 @@ type Question = {
   updatedAt: string;
 };
 
-import { API_BASE } from "@/lib/config";
+import { API_BASE } from "@/lib/config"; // base URL for server endpoints
 
+// Available practice topics (extend as needed)
 const TOPICS = ["DSA", "WebDev", "Java"];
 
+// Fisher-Yates shuffle for randomizing question order client-side
 function shuffle<T>(array: T[]): T[] {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
@@ -35,6 +48,7 @@ export default function PracticeClient() {
   const [seconds, setSeconds] = useState<number>(0);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
+  // Fetch questions for selectedTopic from API then shuffle
   async function loadQuestions() {
     try {
       setLoading(true);
@@ -69,6 +83,7 @@ export default function PracticeClient() {
     }
   }
 
+  // Timer effect: reset seconds on question change and increment each second
   useEffect(() => {
     if (questions.length === 0) return;
 
@@ -86,6 +101,7 @@ export default function PracticeClient() {
       ? questions[currentIndex]
       : null;
 
+  // Persist attempt (correctness + time) to backend for analytics
   async function recordAttempt(wasCorrect: boolean) {
     if (!currentQuestion) return;
 
@@ -118,6 +134,7 @@ export default function PracticeClient() {
     }
   }
 
+  // User marks answer result; record then advance or finish
   async function handleAnswer(wasCorrect: boolean) {
     await recordAttempt(wasCorrect);
 
@@ -128,6 +145,7 @@ export default function PracticeClient() {
     }
   }
 
+  // Skip current question without recording correctness
   function handleSkip() {
     setInfoMessage("Question skipped.");
     if (currentIndex < questions.length - 1) {

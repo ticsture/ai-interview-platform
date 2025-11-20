@@ -1,7 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server"; // Next.js serverless route primitives
 
+// Difficulty levels accepted from client
 type DifficultyLevel = "beginner" | "intermediate" | "advanced";
 
+// Shape of each generated question from AI
 type QuizQuestion = {
   question: string;
   options: string[];
@@ -10,6 +12,7 @@ type QuizQuestion = {
   distractorExplanations?: string[]; // same length as options; explanation for each option (correct one can state why correct)
 };
 
+// Raw quiz response shape expected from AI before sanitization
 type QuizResponse = {
   topic: string;
   difficultyLevel: DifficultyLevel;
@@ -19,11 +22,13 @@ type QuizResponse = {
 // Allowlist of candidate Groq models (ordered by preference). Use only IDs visible in your Groq dashboard.
 // From your screenshot: primary accessible model appears to be "llama-3.1-8b-instant" plus newer variants.
 // Remove deprecated 3.1 70b versatile; add 3.3 70b versatile if accessible.
+// Ordered list of preferred Groq models to attempt (fallback sequence)
 const MODEL_ALLOWLIST = [
   "llama-3.1-8b-instant",
   "llama-3.3-70b-versatile"
 ];
 
+// Select initial model: environment override takes precedence, otherwise first allowlisted
 function selectInitialModel(): string {
   const envModel = process.env.GROQ_MODEL?.trim();
   // Allow any env-provided model (user may add new one before code update)
@@ -31,6 +36,7 @@ function selectInitialModel(): string {
   return MODEL_ALLOWLIST[0];
 }
 
+// POST handler: orchestrates AI request, validation, sanitization, and returns quiz JSON
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -65,7 +71,7 @@ export async function POST(req: NextRequest) {
     // clamp number of questions
     numQuestions = Math.max(3, Math.min(numQuestions, 15));
 
-    const groqApiKey = process.env.GROQ_API_KEY;
+    const groqApiKey = process.env.GROQ_API_KEY; // required API key for Groq
     if (!groqApiKey) {
       return NextResponse.json(
         { error: "GROQ_API_KEY is not configured on the server" },
@@ -73,6 +79,7 @@ export async function POST(req: NextRequest) {
       );
     }
     // Prompts (must be defined before attempt() which references them)
+    // System prompt: enforces strict JSON contract (no markdown), schema & generation rules
     const systemPrompt = `You are an interactive quiz generator for programming and CS topics.
 
 You must return STRICT JSON ONLY with this exact TypeScript-like shape (no markdown, no commentary):
@@ -107,13 +114,15 @@ Rules:
 - ABSOLUTELY NO text outside the JSON. NO backticks.
 `;
 
+    // Legacy field (was used before focusSubtopics); still parsed for backward compatibility
     const remainingSubtopics = (body as any)?.remainingSubtopics as
       | string[]
       | undefined;
     // New optional focused retry support
-    const focusSubtopics = (body as any)?.focusSubtopics as string[] | undefined;
-    const existingSubtopics = (body as any)?.existingSubtopics as string[] | undefined;
+    const focusSubtopics = (body as any)?.focusSubtopics as string[] | undefined; // subset for retry or continuation
+    const existingSubtopics = (body as any)?.existingSubtopics as string[] | undefined; // canonical list preservation
 
+    // User prompt contextualizes generation request (initial vs retry/continuation)
     let userPrompt: string;
     if (existingSubtopics && existingSubtopics.length) {
       // Retry mode preserving canonical list
@@ -141,9 +150,10 @@ Return ONLY the JSON described by system instructions.`;
     }
 
     // Debug: show which model & that key is present (never log the key itself)
-    const triedModels: string[] = [];
-    const errors: Array<{ model: string; status: number; code?: string; message?: string }> = [];
+    const triedModels: string[] = []; // track attempted models for debugging
+    const errors: Array<{ model: string; status: number; code?: string; message?: string }> = []; // capture failure info
 
+    // Attempt calling a single model. Returns Response if OK, null if retry should proceed to next model.
     async function attempt(model: string): Promise<Response | null> {
       triedModels.push(model);
       if (process.env.NODE_ENV === "development") {
@@ -194,7 +204,7 @@ Return ONLY the JSON described by system instructions.`;
 
     // Attempt with initial + fallback if needed
     const initialModel = selectInitialModel();
-    let completionRes: Response | null = await attempt(initialModel);
+    let completionRes: Response | null = await attempt(initialModel); // first attempt
     if (!completionRes) {
       // Try remaining models not yet attempted
       for (const alt of MODEL_ALLOWLIST) {
@@ -222,12 +232,11 @@ Return ONLY the JSON described by system instructions.`;
 
     // At this point completionRes is successful
 
-    const data = await completionRes.json();
+    const data = await completionRes.json(); // Groq chat completion raw payload
 
-    const content: string =
-      data.choices?.[0]?.message?.content ?? "";
+    const content: string = data.choices?.[0]?.message?.content ?? ""; // model message content (expected JSON string)
 
-    let parsed: QuizResponse;
+    let parsed: QuizResponse; // parsed quiz data from AI
     try {
       parsed = JSON.parse(content);
     } catch (e) {
@@ -261,9 +270,9 @@ Return ONLY the JSON described by system instructions.`;
     }
 
     // Optionally trim to numQuestions if overshoot
-    parsed.questions = parsed.questions.slice(0, numQuestions);
+    parsed.questions = parsed.questions.slice(0, numQuestions); // trim overshoot
     // Basic sanitization: ensure subtopic present
-    parsed.questions = parsed.questions.map((q: any) => ({
+    parsed.questions = parsed.questions.map((q: any) => ({ // sanitize & normalize question objects
       subtopic: typeof q.subtopic === 'string' ? q.subtopic.trim() : "unknown",
       question: q.question,
       options: Array.isArray(q.options) ? q.options.slice(0,4) : [],
@@ -273,17 +282,19 @@ Return ONLY the JSON described by system instructions.`;
     }));
 
     // Series-wise ordering of questions by canonical subtopic order
+    // Determine ordering source: existing canonical list (retry) or AI-provided allSubtopics (initial)
     const canonical = (existingSubtopics && existingSubtopics.length)
       ? existingSubtopics
       : ((parsed as any).allSubtopics as string[]);
 
+    // If focusing on subset (retry) restrict ordering to those; else whole canonical
     const orderForThisQuiz = (focusSubtopics && focusSubtopics.length)
       ? canonical.filter(s => new Set(focusSubtopics).has(s))
       : canonical;
 
-    const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
-    const indexMap = new Map<string, number>(orderForThisQuiz.map((s, i) => [norm(s), i]));
-    parsed.questions = parsed.questions.sort((a: any, b: any) => {
+    const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' '); // normalization helper
+    const indexMap = new Map<string, number>(orderForThisQuiz.map((s, i) => [norm(s), i])); // stable order mapping
+    parsed.questions = parsed.questions.sort((a: any, b: any) => { // final series-wise ordering
       const ia = indexMap.get(norm(a.subtopic)) ?? Number.MAX_SAFE_INTEGER;
       const ib = indexMap.get(norm(b.subtopic)) ?? Number.MAX_SAFE_INTEGER;
       return ia - ib;

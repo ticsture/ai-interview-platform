@@ -1,4 +1,4 @@
-"use client";
+"use client"; // Client component: allows hooks, browser APIs, localStorage
 import { useState, useEffect } from "react";
 
 type DifficultyLevel = "beginner" | "intermediate" | "advanced";
@@ -17,28 +17,35 @@ type QuizData = {
   questions: QuizQuestion[];
 };
 
+// Home = main quiz UI + logic.
+// Responsibilities:
+// 1. Generate quiz (calls /api/quiz/generate)
+// 2. Render ordered questions & handle answering
+// 3. Track mastery, coverage, missed subtopics
+// 4. Support retries (missed only) & continuation (remaining subtopics)
+// 5. Persist session summary to localStorage for stats page
 export default function Home() {
+  // User inputs / quiz-level state
   const [topic, setTopic] = useState("");
   const [difficultyLevel, setDifficultyLevel] = useState<DifficultyLevel>("beginner");
-  const [numQuestions, setNumQuestions] = useState(5);
-  const [quiz, setQuiz] = useState<QuizData | null>(null);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-  const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
-  const [score, setScore] = useState(0);
-  const [results, setResults] = useState<{ subtopic: string; correct: boolean }[]>([]);
-  const [coveredSubtopics, setCoveredSubtopics] = useState<Set<string>>(new Set());
-  const [subtopicStats, setSubtopicStats] = useState<Map<string, { attempts: number; correct: number }>>(new Map());
-  const [missedSubtopics, setMissedSubtopics] = useState<Set<string>>(new Set());
-  const [remainingSubtopics, setRemainingSubtopics] = useState<string[]>([]);
-  // Preserve the full canonical subtopic list from the FIRST generation for this topic+level.
-  const [fullSubtopics, setFullSubtopics] = useState<string[]>([]);
-  // Track the latest outcome per subtopic across retries
-  const [lastOutcome, setLastOutcome] = useState<Map<string, boolean>>(new Map());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [numQuestions, setNumQuestions] = useState(5); // desired number of questions this run
+  const [quiz, setQuiz] = useState<QuizData | null>(null); // AI provided quiz payload
+  const [currentIndex, setCurrentIndex] = useState(0); // which question user is on
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null); // chosen option for current question
+  const [isCorrect, setIsCorrect] = useState<boolean | null>(null); // correctness of current selection
+  const [score, setScore] = useState(0); // number of correct answers so far (this session only)
+  const [results, setResults] = useState<{ subtopic: string; correct: boolean }[]>([]); // per-question correctness log
+  const [coveredSubtopics, setCoveredSubtopics] = useState<Set<string>>(new Set()); // distinct subtopics encountered
+  const [subtopicStats, setSubtopicStats] = useState<Map<string, { attempts: number; correct: number }>>(new Map()); // mastery counters
+  const [missedSubtopics, setMissedSubtopics] = useState<Set<string>>(new Set()); // subtopics answered incorrectly (pending retry)
+  const [remainingSubtopics, setRemainingSubtopics] = useState<string[]>([]); // canonical subtopics not yet covered
+  const [fullSubtopics, setFullSubtopics] = useState<string[]>([]); // canonical ordered list from first generation
+  const [lastOutcome, setLastOutcome] = useState<Map<string, boolean>>(new Map()); // latest outcome per subtopic (for persistent coloring)
+  const [loading, setLoading] = useState(false); // network / generation state
+  const [error, setError] = useState<string | null>(null); // validation or fetch error
 
   // Helpers to ensure robust series-wise ordering even if AI returns minor name variations
+  // Normalize AI-provided subtopic names to stabilize ordering & matching
   function normalizeSubtopicName(s: string) {
     return (s || "")
       .toLowerCase()
@@ -46,6 +53,7 @@ export default function Home() {
       .trim()
       .replace(/\s+/g, " ");
   }
+  // Determine stable order index for a subtopic within the canonical list (supports fuzzy variations)
   function indexForSubtopic(name: string, canonical: string[]) {
     const n = normalizeSubtopicName(name);
     // exact normalized match
@@ -64,6 +72,7 @@ export default function Home() {
   const currentQuestion = questions.length > 0 && currentIndex < questions.length ? questions[currentIndex] : null;
   const quizFinished = hasStarted && currentIndex === questions.length - 1 && selectedIndex !== null;
 
+  // Request a NEW quiz from AI (initial run). Resets transient session state.
   async function startQuiz(e: React.FormEvent) {
     e.preventDefault();
     if (!topic.trim()) { setError("Enter a topic to begin."); return; }
@@ -85,6 +94,7 @@ export default function Home() {
     } catch (err:any) { setError(err.message || "Unknown error"); } finally { setLoading(false); }
   }
 
+  // Process user's answer selection: update score, mastery, missed sets, outcome coloring.
   function selectOption(idx: number) {
     if (!currentQuestion || selectedIndex !== null) return;
     setSelectedIndex(idx); const correct = idx === currentQuestion.correctIndex; setIsCorrect(correct); if (correct) setScore(s=>s+1);
@@ -107,10 +117,12 @@ export default function Home() {
     });
   }
 
+  // Move to next question; keep accumulated stats intact.
   function nextQuestion() {
     if (!quiz) return; if (currentIndex < questions.length - 1) { setCurrentIndex(i=>i+1); setSelectedIndex(null); setIsCorrect(null); } else { /* end */ }
   }
 
+  // Generate questions only for remaining uncovered subtopics (extension drill).
   async function continueRemaining() {
     if (!quiz || remainingSubtopics.length === 0) return; setLoading(true); setError(null);
     try {
@@ -126,8 +138,10 @@ export default function Home() {
     } catch (err:any) { setError(err.message || "Unknown error"); } finally { setLoading(false); }
   }
 
+  // Full reset (new canonical list will be fetched on next start).
   function restart() { setQuiz(null); setCurrentIndex(0); setSelectedIndex(null); setIsCorrect(null); setScore(0); setError(null); setCoveredSubtopics(new Set()); setRemainingSubtopics([]); setResults([]); setSubtopicStats(new Map()); setMissedSubtopics(new Set()); setFullSubtopics([]); setLastOutcome(new Map()); }
 
+  // Persist session summary (score, coverage, mastery) to localStorage and navigate to stats.
   function finalizeQuiz() {
     if (!quiz) return;
     const coverageTotal = fullSubtopics.length || quiz.allSubtopics?.length || 0;
@@ -156,6 +170,7 @@ export default function Home() {
     window.location.href = "/stats";
   }
 
+  // Drill only previously missed subtopics; preserves canonical list so coverage denominator is stable.
   async function retryMissed() {
     if (!quiz) return;
     const targets = Array.from(missedSubtopics.values());
@@ -177,7 +192,7 @@ export default function Home() {
     } catch (e:any) { setError(e.message || 'Unknown error'); } finally { setLoading(false); }
   }
 
-  // Keyboard shortcuts listener
+  // Keyboard shortcuts listener (Enter, 1-9, N, R, S) for faster navigation & answering.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;

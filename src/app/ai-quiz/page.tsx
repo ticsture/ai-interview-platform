@@ -1,9 +1,32 @@
 "use client";
 
+/**
+ * AiQuizPage: Generates and runs an AI-created multiple-choice quiz.
+ * User chooses topic + difficulty + question count, then we POST to /api/quiz/generate.
+ * The API returns canonical subtopics and ordered questions.
+ * State summary:
+ *   topic/difficultyLevel/numQuestions: configuration inputs
+ *   quiz: current quiz payload (null until generated)
+ *   coveredSubtopics: set of subtopics answered so far
+ *   remainingSubtopics: outstanding subtopics for continuation generation
+ *   currentIndex: pointer into quiz.questions
+ *   selectedIndex: chosen answer for current question (null before selection)
+ *   isCorrect: correctness of the selected answer
+ *   score: count of correct answers
+ *   loading/error: network and validation states
+ * Core flows:
+ *   handleStartQuiz -> initial generation
+ *   handleSelectOption -> answer + mark coverage
+ *   handleNextQuestion -> advance / finish
+ *   generateNextSubset -> request only remainingSubtopics
+ *   handleRestart -> full reset
+ */
 import { useState } from "react";
 
+// Difficulty categories forwarded to backend prompt
 type DifficultyLevel = "beginner" | "intermediate" | "advanced";
 
+// Shape of an individual MCQ returned by AI
 type QuizQuestion = {
   subtopic: string;
   question: string;
@@ -12,6 +35,7 @@ type QuizQuestion = {
   explanation: string;
 };
 
+// Full quiz payload including canonical subtopics order
 type QuizData = {
   topic: string;
   difficultyLevel: DifficultyLevel;
@@ -43,6 +67,7 @@ export default function AiQuizPage() {
       ? questions[currentIndex]
       : null;
 
+  // Validate form and request initial quiz from API
   async function handleStartQuiz(e: React.FormEvent) {
     e.preventDefault();
 
@@ -101,6 +126,7 @@ export default function AiQuizPage() {
     }
   }
 
+  // Record answer selection; compute correctness; update coverage
   function handleSelectOption(index: number) {
     if (!currentQuestion) return;
     if (selectedIndex !== null) return; // already answered
@@ -125,6 +151,7 @@ export default function AiQuizPage() {
     });
   }
 
+  // Advance pointer or finalize quiz state
   function handleNextQuestion() {
     if (!quiz) return;
     if (currentIndex < quiz.questions.length - 1) {
@@ -138,6 +165,7 @@ export default function AiQuizPage() {
     }
   }
 
+  // Request a new quiz limited to remaining subtopics (continuation flow)
   async function generateNextSubset() {
     if (!quiz || remainingSubtopics.length === 0) return;
     setLoading(true);
@@ -169,6 +197,7 @@ export default function AiQuizPage() {
     }
   }
 
+  // Full reset to initial form state
   function handleRestart() {
     setQuiz(null);
     setCurrentIndex(0);
@@ -180,6 +209,7 @@ export default function AiQuizPage() {
     setRemainingSubtopics([]);
   }
 
+  // Derived boolean: quiz is fully answered
   const quizFinished =
     hasStarted && currentIndex === questions.length - 1 && selectedIndex !== null;
 

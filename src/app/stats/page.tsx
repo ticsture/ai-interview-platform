@@ -1,6 +1,7 @@
-"use client";
+"use client"; // Client component: reads localStorage, uses hooks
 import { useEffect, useState } from "react";
 
+// Shape of a stored quiz session (persisted after each quiz finish)
 type SessionSummary = {
   timestamp: number;
   topic: string;
@@ -15,11 +16,13 @@ type SessionSummary = {
   subtopics?: string[];
 };
 
+// StatsPage: displays latest session + historical aggregates from localStorage
 export default function StatsPage() {
   const [session, setSession] = useState<SessionSummary | null>(null);
   const [history, setHistory] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // On mount: load latest session + entire history arrays from localStorage
   useEffect(() => {
     try {
       const last = localStorage.getItem("lastQuizSession");
@@ -29,11 +32,16 @@ export default function StatsPage() {
     } catch {}
   }, []);
 
+  // Overall average accuracy across stored sessions
   const overallAveragePercent = history.length > 0 ? Math.round(history.reduce((a,s)=>a+s.percent,0)/history.length) : null;
+  // Best (max) accuracy achieved so far
   const bestPercent = history.length > 0 ? Math.max(...history.map(s=>s.percent)) : null;
+  // Sparkline values (most recent up to 10, reversed for chronological display left->right)
   const sparkValues = history.slice(0,10).map(s=>s.percent).reverse();
+  // Tier classification derived from latest session accuracy
   const tier = session ? getTier(session.percent) : null;
 
+  // Clears ALL stored session data (destructive)
   function clearHistory() {
     localStorage.removeItem("quizHistory");
     localStorage.removeItem("lastQuizSession");
@@ -113,6 +121,7 @@ export default function StatsPage() {
   );
 }
 
+// Metric: small card displaying a numeric value + bar (percent used for bar fill)
 function Metric({ label, value, percent }: { label: string; value: string; percent: number }) {
   return (
     <div className="space-y-1">
@@ -125,6 +134,7 @@ function Metric({ label, value, percent }: { label: string; value: string; perce
   );
 }
 
+// Sparkline: tiny line chart for recent performance trends
 function Sparkline({ values }: { values: number[] }) {
   const max = Math.max(...values, 100);
   const pts = values.map((v,i)=>`${i*(100/(values.length-1))},${100 - (v/max)*100}`).join(" ");
@@ -135,6 +145,7 @@ function Sparkline({ values }: { values: number[] }) {
   );
 }
 
+// Map accuracy to descriptive tier badge
 function getTier(percent: number) {
   if (percent < 40) return "Novice";
   if (percent < 65) return "Improving";
@@ -142,6 +153,7 @@ function getTier(percent: number) {
   return "Expert";
 }
 
+// Copies concise session summary for sharing or personal notes
 function copySummary() {
   try {
     const last = localStorage.getItem("lastQuizSession");

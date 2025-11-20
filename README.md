@@ -25,6 +25,7 @@
 12. Roadmap  
 13. Contributing  
 14. License / Usage Notes  
+15. File Map & Structure ([docs/README.md](./docs/README.md))  
 
 ## 1. Overview
 This project provides an adaptive study & interview preparation experience. Specify a topic (e.g. “Java”, “HTML”, “Operating Systems”) and a difficulty level. The system calls an AI model (via Groq API) to generate a structured quiz: ordered subtopics, multiple‑choice questions (MCQ) with one correct answer, detailed correct answer reasoning, and concise per‑option distractor explanations. Progress and mastery for each subtopic are tracked locally, enabling targeted retries of only missed material.
@@ -57,6 +58,8 @@ ai-interview-platform/
 └─ README.md
 ```
 Frontend uses Next.js (App Router) & React; backend (optional) uses Express + Mongoose for future server‑side attempt logging. Currently, quiz performance is stored client‑side for user privacy and low friction.
+
+> Quick Link: For a detailed file-by-file explanation see the **[Full File Map in docs/README.md](./docs/README.md)**.
 
 ## 4. Data Model
 ### Generated Quiz Shape (AI Response)

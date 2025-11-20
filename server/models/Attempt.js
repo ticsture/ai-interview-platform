@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 
+// Attempt schema: each user response to a stored question (enables longitudinal analytics if integrated)
 const attemptSchema = new mongoose.Schema(
   {
     questionId: {

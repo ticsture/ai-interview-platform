@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 
+// Question schema: stores manually curated or future AI-normalized questions (not required for runtime quiz generation yet)
 const questionSchema = new mongoose.Schema(
   {
     topic: {

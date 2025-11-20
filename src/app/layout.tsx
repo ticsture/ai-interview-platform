@@ -1,3 +1,8 @@
+/**
+ * RootLayout: wraps every page in consistent HTML, <head> metadata, navigation,
+ * and shared footer. The App Router injects each route's content via `children`.
+ * Styling relies on Tailwind utility classes + imported global CSS.
+ */
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import Link from "next/link";
@@ -5,6 +10,7 @@ import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
 
+// Metadata controls <title> and meta description for SEO and sharing.
 export const metadata: Metadata = {
   title: "AI Interview Practice",
   description: "Practice coding & tech interviews with tracking and stats.",
@@ -21,7 +27,7 @@ export default function RootLayout({
         className={`${inter.className} bg-zinc-950 text-zinc-50 antialiased`}
       >
         <div className="min-h-screen flex flex-col">
-          {/* Top navbar */}
+          {/* Top navbar: global navigation (add more links as features grow) */}
           <header className="border-b border-zinc-800 bg-black/60 backdrop-blur">
             <nav className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between px-4">
               <Link href="/" className="flex items-center gap-2">
@@ -40,14 +46,14 @@ export default function RootLayout({
             </nav>
           </header>
 
-          {/* Main content area */}
+          {/* Main content container: renders routed page content */}
           <main className="flex-1">
             <div className="mx-auto w-full max-w-5xl px-4 py-10">
               {children}
             </div>
           </main>
 
-          {/* Footer */}
+          {/* Footer: static project attribution + stack summary */}
           <footer className="border-t border-zinc-800 bg-black/70">
             <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-4 text-xs text-zinc-500">
               <span>Built by you · Full-stack practice project</span>

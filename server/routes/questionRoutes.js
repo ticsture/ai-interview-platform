@@ -1,9 +1,9 @@
 const express = require("express");
-const Question = require("../models/Question");
+const Question = require("../models/Question"); // Mongoose model for stored questions
 
 const router = express.Router();
 
-// CREATE question
+// CREATE question: basic endpoint to add a manual question (future expansion)
 router.post("/", async (req, res) => {
   try {
     const { topic, questionText, difficulty } = req.body;
@@ -21,7 +21,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-// GET questions (all or by topic)
+// GET questions: optional topic filter (used for browsing / admin tooling)
 router.get("/", async (req, res) => {
   try {
     const { topic } = req.query;

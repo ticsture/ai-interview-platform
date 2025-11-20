@@ -1,10 +1,16 @@
+/*
+ * Global stylesheet loaded once via RootLayout.
+ * Tailwind utilities imported; we also define CSS variables for light/dark theming.
+ */
 @import "tailwindcss";
 
+/* Light theme defaults (auto overridden by prefers-color-scheme: dark) */
 :root {
   --background: #ffffff;
   --foreground: #171717;
 }
 
+/* Tailwind theme variables (inline layer) mapped to our CSS vars */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -12,6 +18,7 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* System dark mode override */
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
@@ -19,6 +26,7 @@
   }
 }
 
+/* Base body styling (fonts overridden by next/font where applied) */
 body {
   background: var(--background);
   color: var(--foreground);

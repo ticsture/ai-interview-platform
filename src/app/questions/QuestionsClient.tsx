@@ -1,7 +1,21 @@
 "use client";
 
+/**
+ * QuestionsClient: Admin-style interface for creating and listing stored questions.
+ * Features:
+ * - Filtering by topic ("All" triggers unfiltered fetch)
+ * - Adding new questions with topic + difficulty
+ * - Re-render list after insertion when filter matches new question
+ * State overview:
+ *   questions: loaded array
+ *   selectedTopic: active filter
+ *   loading/error: network status
+ *   formTopic/formDifficulty/formText: controlled form inputs
+ *   saving/saveMessage: submission lifecycle & feedback
+ */
 import { useEffect, useState } from "react";
 
+// Backend question document shape
 type Question = {
   _id: string;
   topic: string;
@@ -11,8 +25,9 @@ type Question = {
   updatedAt: string;
 };
 
-import { API_BASE } from "@/lib/config";
+import { API_BASE } from "@/lib/config"; // Express API base URL
 
+// Static filters (extend if adding new domains or levels)
 const TOPICS = ["All", "DSA", "WebDev", "Java"];
 const DIFFICULTIES = ["easy", "medium", "hard"];
 
@@ -30,6 +45,7 @@ export default function QuestionsClient() {
   const [saving, setSaving] = useState<boolean>(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
+  // Load questions from API using optional topic filter
   async function loadQuestions(topic: string) {
     try {
       setLoading(true);
@@ -53,16 +69,17 @@ export default function QuestionsClient() {
     }
   }
 
-  // initial load
+  // Initial load on mount (fetch everything)
   useEffect(() => {
     loadQuestions("All");
   }, []);
 
-  // reload when filter changes
+  // Reload when user changes topic filter
   useEffect(() => {
     loadQuestions(selectedTopic);
   }, [selectedTopic]);
 
+  // Submit form to create a new question document
   async function handleAddQuestion(e: React.FormEvent) {
     e.preventDefault();
 
